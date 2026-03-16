@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini API Manager (Auto-save Ver.)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <style>
+        .fade-out { transition: opacity 1s ease-out; opacity: 0; }
+        .fade-in { opacity: 1; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900 font-sans">
+
+    <div class="max-w-5xl mx-auto py-10 px-4">
+        <header class="mb-8 flex justify-between items-end">
+            <div>
+                <h1 class="text-3xl font-extrabold text-blue-700 italic">Gemini Monitor <span class="text-sm font-normal text-slate-400 font-mono">v3.0-IDB</span></h1>
+                <p class="text-slate-500 mt-2">設定は自動的にブラウザ内DBへ保存されます</p>
+            </div>
+            <div id="auth-status" class="text-sm font-medium px-3 py-1 rounded-full bg-red-100 text-red-600">
+                未接続
+            </div>
+        </header>
+
+        <section class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="font-bold flex items-center text-slate-700">
+                        <span class="bg-blue-600 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs mr-2 italic">IDB</span>
+                        プロジェクト設定
+                    </h2>
+                    <span id="save-indicator" class="text-[10px] font-bold text-green-500 opacity-0">● 保存完了</span>
+                </div>
+                
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-xs text-slate-500 mb-1">OAuth Client ID</label>
+                        <input type="text" id="input-client-id" placeholder="xxx.apps.googleusercontent.com" 
+                            class="w-full p-2 border rounded text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-slate-500 mb-1">GCP Project ID</label>
+                        <input type="text" id="input-project-id" placeholder="your-project-id-123" 
+                            class="w-full p-2 border rounded text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all">
+                    </div>
+                </div>
+                <p class="mt-4 text-[10px] text-slate-400 italic">※入力すると即座にIndexedDBに同期されます。</p>
+            </div>
+
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col justify-center">
+                <h2 class="font-bold mb-4 text-center">API 接続同期</h2>
+                <button id="login-btn" onclick="handleAuthClick()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl transition shadow-lg disabled:bg-slate-200 disabled:text-slate-400">
+                    Googleでログイン
+                </button>
+                <div id="debug-msg" class="mt-4 text-center text-[10px] text-slate-400 font-mono italic h-4"></div>
+            </div>
+        </section>
+
+        <section id="main-dashboard" class="hidden space-y-6">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                    <h3 class="text-slate-500 text-sm italic underline decoration-blue-200">24h Requests</h3>
+                    <p id="stat-requests" class="text-3xl font-bold mt-2">--</p>
+                </div>
+                <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                    <h3 class="text-slate-500 text-sm italic underline decoration-blue-200">Est. Tokens</h3>
+                    <p id="stat-tokens" class="text-3xl font-bold mt-2 text-blue-600">--</p>
+                </div>
+                <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                    <h3 class="text-slate-500 text-sm italic underline decoration-blue-200">RPM Status</h3>
+                    <p id="stat-quota" class="text-3xl font-bold mt-2 text-green-600">Active</p>
+                </div>
+            </div>
+
+            <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                <h3 class="text-lg font-bold mb-4">Traffic View</h3>
+                <div class="h-[300px]"><canvas id="usageChart"></canvas></div>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        const DB_NAME = 'GeminiDashboardDB';
+        const STORE_NAME = 'settings';
+
+        // --- IndexedDB コア ---
+        function openDB() {
+            return new Promise((resolve) => {
+                const request = indexedDB.open(DB_NAME, 1);
+                request.onupgradeneeded = (e) => e.target.result.createObjectStore(STORE_NAME);
+                request.onsuccess = (e) => resolve(e.target.result);
+            });
+        }
+
+        async function dbSet(key, value) {
+            const db = await openDB();
+            return new Promise((resolve) => {
+                const tx = db.transaction(STORE_NAME, 'readwrite');
+                tx.objectStore(STORE_NAME).put(value, key);
+                tx.oncomplete = () => resolve();
+            });
+        }
+
+        async function dbGet(key) {
+            const db = await openDB();
+            return new Promise((resolve) => {
+                const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(key);
+                request.onsuccess = () => resolve(request.result);
+            });
+        }
+
+        // --- オートセーブ機能 ---
+        let saveTimeout;
+        function triggerAutoSave() {
+            const indicator = document.getElementById('save-indicator');
+            indicator.innerText = "● 保存中...";
+            indicator.classList.remove('fade-out');
+            indicator.style.opacity = 1;
+
+            clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(async () => {
+                const cid = document.getElementById('input-client-id').value.trim();
+                const pid = document.getElementById('input-project-id').value.trim();
+                
+                await dbSet('client_id', cid);
+                await dbSet('project_id', pid);
+
+                indicator.innerText = "● 保存完了";
+                setTimeout(() => indicator.classList.add('fade-out'), 1000);
+                
+                // 設定が揃ったらAuthを再初期化
+                if(cid) initGoogleAuth(cid);
+            }, 500); // 0.5秒のデバウンス（タイピング停止を待つ）
+        }
+
+        // --- メイン処理 ---
+        let tokenClient;
+        let accessToken = null;
+        let myChart = null;
+
+        window.onload = async function() {
+            const cidField = document.getElementById('input-client-id');
+            const pidField = document.getElementById('input-project-id');
+
+            // 1. 初期データ読み込み
+            const savedCid = await dbGet('client_id');
+            const savedPid = await dbGet('project_id');
+            if (savedCid) cidField.value = savedCid;
+            if (savedPid) pidField.value = savedPid;
+
+            // 2. イベントリスナー登録 (Auto-save)
+            cidField.addEventListener('input', triggerAutoSave);
+            pidField.addEventListener('input', triggerAutoSave);
+
+            if (savedCid) initGoogleAuth(savedCid);
+        };
+
+        function initGoogleAuth(clientId) {
+            try {
+                tokenClient = google.accounts.oauth2.initTokenClient({
+                    client_id: clientId,
+                    scope: 'https://www.googleapis.com/auth/monitoring.read',
+                    callback: (response) => {
+                        if (response.access_token) {
+                            accessToken = response.access_token;
+                            onAuthSuccess();
+                        }
+                    },
+                });
+                document.getElementById('debug-msg').innerText = "Google API Ready.";
+                document.getElementById('login-btn').disabled = false;
+            } catch (e) {
+                document.getElementById('debug-msg').innerText = "ID Check Required.";
+            }
+        }
+
+        function handleAuthClick() {
+            if (tokenClient) tokenClient.requestAccessToken({prompt: 'consent'});
+        }
+
+        async function onAuthSuccess() {
+            document.getElementById('main-dashboard').classList.remove('hidden');
+            document.getElementById('auth-status').innerText = "Connected";
+            document.getElementById('auth-status').className = "text-sm font-medium px-3 py-1 rounded-full bg-green-100 text-green-600";
+            
+            const projectId = await dbGet('project_id');
+            fetchMetrics(projectId);
+        }
+
+        async function fetchMetrics(projectId) {
+            const now = new Date();
+            const startTime = new Date(now.getTime() - (24 * 60 * 60 * 1000)).toISOString();
+            const endTime = now.toISOString();
+
+            const url = `https://monitoring.googleapis.com/v3/projects/${projectId}/timeSeries?filter=metric.type="serviceruntime.googleapis.com/api/request_count" AND resource.labels.service="generativelanguage.googleapis.com"&interval.startTime=${startTime}&interval.endTime=${endTime}`;
+
+            try {
+                const response = await fetch(url, { headers: { 'Authorization': `Bearer ${accessToken}` } });
+                const data = await response.json();
+                if (data.timeSeries) updateUI(data.timeSeries);
+            } catch (err) { console.error(err); }
+        }
+
+        function updateUI(timeSeries) {
+            let total = 0;
+            const labels = [];
+            const values = [];
+            const points = timeSeries[0].points;
+
+            points.reverse().forEach(p => {
+                labels.push(new Date(p.interval.endTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}));
+                const val = parseInt(p.value.int64Value);
+                values.push(val);
+                total += val;
+            });
+
+            document.getElementById('stat-requests').innerText = total.toLocaleString();
+            document.getElementById('stat-tokens').innerText = (total * 1500).toLocaleString(); 
+            renderChart(labels, values);
+        }
+
+        function renderChart(labels, values) {
+            const ctx = document.getElementById('usageChart').getContext('2d');
+            if (myChart) myChart.destroy();
+            myChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Requests',
+                        data: values,
+                        borderColor: '#2563eb',
+                        backgroundColor: 'rgba(37, 99, 235, 0.1)',
+                        tension: 0.3,
+                        fill: true
+                    }]
+                },
+                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+            });
+        }
+    </script>
+</body>
+</html>
