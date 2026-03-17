@@ -3,29 +3,52 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gemini API Manager (Auto-save Ver.)</title>
+    <title>Gemini API Manager (Auto-save & Budget Ver.)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <style>
+        /* ============================================
+           DESIGN SYSTEM - Obsidian Terminal
+           GenAI Chat App v2.0 (変数定義のみ追加)
+           ============================================ */
+        :root {
+          /* Backgrounds */
+          --color-bg-deep:       #0D0F14;
+          --color-bg-surface:    #161920;
+          --color-bg-elevated:   #1E2433;
+          /* Borders */
+          --color-border:        #2A2D36;
+          --color-border-focus:  #4A4F5E;
+          /* Text */
+          --color-text-primary:  #E8E4F0;
+          --color-text-secondary:#6B7280;
+          --color-text-muted:    #3D4251;
+          /* Typography */
+          --font-display: 'Syne', sans-serif;
+          --font-body:    'DM Sans', sans-serif;
+          --font-mono:    'JetBrains Mono', monospace;
+        }
+
         .fade-out { transition: opacity 1s ease-out; opacity: 0; }
         .fade-in { opacity: 1; }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-900 font-sans">
 
-    <div class="max-w-5xl mx-auto py-10 px-4">
+    <div class="max-w-6xl mx-auto py-10 px-4">
         <header class="mb-8 flex justify-between items-end">
             <div>
-                <h1 class="text-3xl font-extrabold text-blue-700 italic">Gemini Monitor <span class="text-sm font-normal text-slate-400 font-mono">v3.0-IDB</span></h1>
-                <p class="text-slate-500 mt-2">設定は自動的にブラウザ内DBへ保存されます</p>
+                <h1 class="text-3xl font-extrabold text-blue-700 italic">Gemini Monitor <span class="text-sm font-normal text-slate-400 font-mono">v4.0-Budget</span></h1>
+                <p class="text-slate-500 mt-2">設定や予算管理は自動的にブラウザ内DBへ保存されます</p>
             </div>
             <div id="auth-status" class="text-sm font-medium px-3 py-1 rounded-full bg-red-100 text-red-600">
                 未接続
             </div>
         </header>
 
-        <section class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+        <!-- 修正: 設定パネルを3カラム構成に変更し、予算・単価設定を追加 -->
+        <section class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
             <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
                 <div class="flex justify-between items-center mb-4">
                     <h2 class="font-bold flex items-center text-slate-700">
@@ -50,6 +73,34 @@
                 <p class="mt-4 text-[10px] text-slate-400 italic">※入力すると即座にIndexedDBに同期されます。</p>
             </div>
 
+            <!-- 新規追加: 予算・単価設定パネル -->
+            <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                <h2 class="font-bold mb-4 flex items-center text-slate-700">
+                    <span class="bg-purple-600 text-white w-6 h-6 rounded-full flex items-center justify-center text-xs mr-2 italic">$</span>
+                    予算・単価設定
+                </h2>
+                
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-xs text-slate-500 mb-1">月間予算 (USD)</label>
+                        <input type="number" id="input-budget" placeholder="10.0" step="0.1" min="0"
+                            class="w-full p-2 border rounded text-sm focus:ring-2 focus:ring-purple-500 outline-none transition-all">
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-xs text-slate-500 mb-1">警告閾値 (%)</label>
+                            <input type="number" id="input-threshold" placeholder="80" max="100" min="1"
+                                class="w-full p-2 border rounded text-sm focus:ring-2 focus:ring-purple-500 outline-none transition-all">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-slate-500 mb-1">単価(USD/1M Token)</label>
+                            <input type="number" id="input-price" placeholder="0.15" step="0.01" min="0"
+                                class="w-full p-2 border rounded text-sm focus:ring-2 focus:ring-purple-500 outline-none transition-all">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-col justify-center">
                 <h2 class="font-bold mb-4 text-center">API 接続同期</h2>
                 <button id="login-btn" onclick="handleAuthClick()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl transition shadow-lg disabled:bg-slate-200 disabled:text-slate-400">
@@ -60,7 +111,8 @@
         </section>
 
         <section id="main-dashboard" class="hidden space-y-6">
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <!-- 修正: 統計パネルを4カラム構成に変更し、予算進捗を追加 -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
                     <h3 class="text-slate-500 text-sm italic underline decoration-blue-200">24h Requests</h3>
                     <p id="stat-requests" class="text-3xl font-bold mt-2">--</p>
@@ -72,6 +124,15 @@
                 <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
                     <h3 class="text-slate-500 text-sm italic underline decoration-blue-200">RPM Status</h3>
                     <p id="stat-quota" class="text-3xl font-bold mt-2 text-green-600">Active</p>
+                </div>
+                <!-- 新規追加: コスト・予算進捗状況 -->
+                <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                    <h3 class="text-slate-500 text-sm italic underline decoration-purple-200">Est. Cost / Budget</h3>
+                    <p id="stat-cost" class="text-3xl font-bold mt-2 text-purple-600">$0.000</p>
+                    <div class="mt-3 w-full bg-slate-100 rounded-full h-2">
+                        <div id="budget-progress" class="bg-purple-500 h-2 rounded-full transition-all duration-500" style="width: 0%"></div>
+                    </div>
+                    <p id="stat-budget-info" class="text-[11px] text-slate-400 mt-1 text-right font-mono">--% used</p>
                 </div>
             </div>
 
@@ -85,6 +146,7 @@
     <script>
         const DB_NAME = 'GeminiDashboardDB';
         const STORE_NAME = 'settings';
+        let lastTimeSeries = null; // 再計算用キャッシュ
 
         // --- IndexedDB コア ---
         function openDB() {
@@ -124,16 +186,23 @@
             saveTimeout = setTimeout(async () => {
                 const cid = document.getElementById('input-client-id').value.trim();
                 const pid = document.getElementById('input-project-id').value.trim();
+                const budget = document.getElementById('input-budget').value.trim();
+                const threshold = document.getElementById('input-threshold').value.trim();
+                const price = document.getElementById('input-price').value.trim();
                 
                 await dbSet('client_id', cid);
                 await dbSet('project_id', pid);
+                await dbSet('budget', budget);
+                await dbSet('threshold', threshold);
+                await dbSet('price', price);
 
                 indicator.innerText = "● 保存完了";
                 setTimeout(() => indicator.classList.add('fade-out'), 1000);
                 
-                // 設定が揃ったらAuthを再初期化
-                if(cid) initGoogleAuth(cid);
-            }, 500); // 0.5秒のデバウンス（タイピング停止を待つ）
+                // 設定が揃ったらAuthを再初期化、およびUIの再計算
+                if(cid && !tokenClient) initGoogleAuth(cid);
+                updateUI(); // 予算や単価の変更を即座にUIへ反映
+            }, 500);
         }
 
         // --- メイン処理 ---
@@ -142,18 +211,23 @@
         let myChart = null;
 
         window.onload = async function() {
-            const cidField = document.getElementById('input-client-id');
-            const pidField = document.getElementById('input-project-id');
-
             // 1. 初期データ読み込み
             const savedCid = await dbGet('client_id');
             const savedPid = await dbGet('project_id');
-            if (savedCid) cidField.value = savedCid;
-            if (savedPid) pidField.value = savedPid;
+            const savedBudget = await dbGet('budget');
+            const savedThreshold = await dbGet('threshold');
+            const savedPrice = await dbGet('price');
+
+            if (savedCid) document.getElementById('input-client-id').value = savedCid;
+            if (savedPid) document.getElementById('input-project-id').value = savedPid;
+            if (savedBudget) document.getElementById('input-budget').value = savedBudget;
+            if (savedThreshold) document.getElementById('input-threshold').value = savedThreshold || 80;
+            if (savedPrice) document.getElementById('input-price').value = savedPrice || 0.15;
 
             // 2. イベントリスナー登録 (Auto-save)
-            cidField.addEventListener('input', triggerAutoSave);
-            pidField.addEventListener('input', triggerAutoSave);
+            document.querySelectorAll('input').forEach(input => {
+                input.addEventListener('input', triggerAutoSave);
+            });
 
             if (savedCid) initGoogleAuth(savedCid);
         };
@@ -191,6 +265,7 @@
         }
 
         async function fetchMetrics(projectId) {
+            if (!projectId) return;
             const now = new Date();
             const startTime = new Date(now.getTime() - (24 * 60 * 60 * 1000)).toISOString();
             const endTime = now.toISOString();
@@ -204,11 +279,14 @@
             } catch (err) { console.error(err); }
         }
 
-        function updateUI(timeSeries) {
+        function updateUI(timeSeries = lastTimeSeries) {
+            if (!timeSeries) return;
+            lastTimeSeries = timeSeries; // キャッシュ更新
+
             let total = 0;
             const labels = [];
             const values = [];
-            const points = timeSeries[0].points;
+            const points = timeSeries[0]?.points || [];
 
             points.reverse().forEach(p => {
                 labels.push(new Date(p.interval.endTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}));
@@ -217,8 +295,48 @@
                 total += val;
             });
 
+            // 基本統計の更新
+            const estimatedTokens = total * 1500;
             document.getElementById('stat-requests').innerText = total.toLocaleString();
-            document.getElementById('stat-tokens').innerText = (total * 1500).toLocaleString(); 
+            document.getElementById('stat-tokens').innerText = estimatedTokens.toLocaleString(); 
+            
+            // --- 予算・コストの計算とUI更新 ---
+            const budgetVal = parseFloat(document.getElementById('input-budget').value) || 0;
+            const thresholdVal = parseFloat(document.getElementById('input-threshold').value) || 80;
+            const priceVal = parseFloat(document.getElementById('input-price').value) || 0; // 1M TokenあたりのUSD
+            
+            // 100万トークン単位での利用コスト計算
+            const currentCost = (estimatedTokens / 1000000) * priceVal;
+            const costEl = document.getElementById('stat-cost');
+            const progressEl = document.getElementById('budget-progress');
+            const infoEl = document.getElementById('stat-budget-info');
+
+            costEl.innerText = '$' + currentCost.toFixed(3);
+
+            if (budgetVal > 0) {
+                let percent = (currentCost / budgetVal) * 100;
+                let displayPercent = percent > 100 ? 100 : percent;
+                
+                progressEl.style.width = `${displayPercent}%`;
+                infoEl.innerText = `${percent.toFixed(1)}% used of $${budgetVal.toFixed(1)}`;
+
+                // 閾値警告の判定
+                if (percent >= thresholdVal) {
+                    progressEl.classList.remove('bg-purple-500');
+                    progressEl.classList.add('bg-red-500');
+                    costEl.classList.add('text-red-600');
+                    costEl.classList.remove('text-purple-600');
+                } else {
+                    progressEl.classList.remove('bg-red-500');
+                    progressEl.classList.add('bg-purple-500');
+                    costEl.classList.remove('text-red-600');
+                    costEl.classList.add('text-purple-600');
+                }
+            } else {
+                progressEl.style.width = `0%`;
+                infoEl.innerText = `Budget not set`;
+            }
+
             renderChart(labels, values);
         }
 
